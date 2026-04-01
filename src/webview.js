@@ -5,9 +5,9 @@ const vscode = require("vscode");
 let currentPanel = null;
 let currentPayload = null;
 
-function showDependenciesMindmap({ extensionContext, analysis, exportPath }) {
+function showDependenciesMindmap({ extensionContext, analysis, exportPath, packageXmlPath }) {
   const column = vscode.window.activeTextEditor?.viewColumn || vscode.ViewColumn.Beside;
-  currentPayload = { analysis, exportPath };
+  currentPayload = { analysis, exportPath, packageXmlPath };
 
   if (currentPanel) {
     currentPanel.reveal(column);
@@ -44,6 +44,11 @@ function showDependenciesMindmap({ extensionContext, analysis, exportPath }) {
           await openPath(currentPayload.exportPath);
         }
         break;
+      case "openPackageXml":
+        if (currentPayload?.packageXmlPath) {
+          await openPath(currentPayload.packageXmlPath);
+        }
+        break;
       default:
         break;
     }
@@ -61,7 +66,8 @@ function postCurrentPayload() {
   currentPanel.webview.postMessage({
     type: "setData",
     analysis: currentPayload.analysis,
-    exportPath: currentPayload.exportPath
+    exportPath: currentPayload.exportPath,
+    packageXmlPath: currentPayload.packageXmlPath
   });
 }
 
@@ -571,6 +577,7 @@ function getWebviewHtml(webview) {
         <div class="toolbar-actions">
           <button id="openNodeBtn" disabled>Open selected</button>
           <button id="openExportBtn">Open JSON export</button>
+          <button id="openPackageBtn">Open package.xml</button>
         </div>
       </section>
 
@@ -629,6 +636,7 @@ function getWebviewHtml(webview) {
     const vscode = acquireVsCodeApi();
     let analysis = null;
     let exportPath = null;
+    let packageXmlPath = null;
     let edgeByPair = new Map();
     let visibleTree = null;
 
@@ -680,6 +688,7 @@ function getWebviewHtml(webview) {
       legendRows: document.getElementById("legendRows"),
       openNodeBtn: document.getElementById("openNodeBtn"),
       openExportBtn: document.getElementById("openExportBtn"),
+      openPackageBtn: document.getElementById("openPackageBtn"),
       showAllTypesBtn: document.getElementById("showAllTypesBtn"),
       showRootOnlyBtn: document.getElementById("showRootOnlyBtn")
     };
@@ -718,6 +727,12 @@ function getWebviewHtml(webview) {
       }
     });
 
+    elements.openPackageBtn.addEventListener("click", () => {
+      if (packageXmlPath) {
+        vscode.postMessage({ type: "openPackageXml" });
+      }
+    });
+
     window.addEventListener("message", (event) => {
       const message = event.data;
       if (message?.type !== "setData") {
@@ -726,6 +741,7 @@ function getWebviewHtml(webview) {
 
       analysis = message.analysis || null;
       exportPath = message.exportPath || null;
+      packageXmlPath = message.packageXmlPath || null;
       edgeByPair = new Map(
         (analysis?.graph?.edges || []).map((edge) => [
           edge.from + "->" + edge.to,
@@ -782,6 +798,7 @@ function getWebviewHtml(webview) {
       elements.openNodeBtn.disabled = !selectedNode?.path;
       elements.jumpToOriginalBtn.disabled = !selectedNode?.reference;
       elements.openExportBtn.disabled = !exportPath;
+      elements.openPackageBtn.disabled = !packageXmlPath;
 
       if (!analysis || !visibleTree) {
         elements.svg.innerHTML = "";

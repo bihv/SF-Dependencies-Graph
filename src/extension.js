@@ -3,6 +3,7 @@
 const path = require("path");
 const vscode = require("vscode");
 const { analyzeSelection } = require("./analyzer");
+const { buildPackageXml, resolvePackageApiVersion } = require("./package-xml");
 const { showDependenciesMindmap } = require("./webview");
 
 function activate(context) {
@@ -54,26 +55,35 @@ function activate(context) {
             const timestamp = new Date()
               .toISOString()
               .replace(/[:.]/g, "-");
-            const outputPath = path.join(
-              outputDir,
-              `${safeName}-${timestamp}.dependencies.json`
-            );
+            const artifactDir = path.join(outputDir, `${safeName}-${timestamp}`);
+            const outputPath = path.join(artifactDir, "dependencies.json");
+            const packageXmlPath = path.join(artifactDir, "package.xml");
 
             const serialized = serializeAnalysisResult(result);
+            const packageXml = buildPackageXml(result, {
+              apiVersion: resolvePackageApiVersion(workspaceFolder.uri.fsPath)
+            });
+
+            await vscode.workspace.fs.createDirectory(vscode.Uri.file(artifactDir));
 
             await vscode.workspace.fs.writeFile(
               vscode.Uri.file(outputPath),
               Buffer.from(serialized, "utf8")
             );
+            await vscode.workspace.fs.writeFile(
+              vscode.Uri.file(packageXmlPath),
+              Buffer.from(packageXml, "utf8")
+            );
 
             showDependenciesMindmap({
               extensionContext: context,
               analysis: result,
-              exportPath: outputPath
+              exportPath: outputPath,
+              packageXmlPath
             });
 
             vscode.window.showInformationMessage(
-              `Dependency mindmap ready. JSON exported: ${path.basename(outputPath)}`
+              `Dependency mindmap ready. Exported artifacts to ${path.relative(workspaceFolder.uri.fsPath, artifactDir)}`
             );
           }
         );

@@ -4,6 +4,11 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { analyzeSelection, buildTree } = require("../src/analyzer");
+const {
+  DEFAULT_PACKAGE_API_VERSION,
+  buildPackageXml,
+  resolvePackageApiVersion
+} = require("../src/package-xml");
 
 async function main() {
   const workspaceRoot = path.join(__dirname, "..", "test-fixtures", "simple");
@@ -50,9 +55,12 @@ async function main() {
     "low-confidence heuristic edges",
     "Low-confidence heuristic warnings should be surfaced"
   );
+  verifyPackageXml(result);
+  await verifyPackageXmlForCustomMetadataRecord();
 
   verifyCompactTree();
   await verifyWarningAggregation();
+  await verifyPackageApiVersionResolution();
 
   console.log(
     JSON.stringify(
@@ -93,6 +101,68 @@ function verifyCompactTree() {
   assert(
     rightBranchShared.children.length === 0,
     "Reference leaf should not duplicate the shared subtree"
+  );
+}
+
+function verifyPackageXml(result) {
+  const xml = buildPackageXml(result, { apiVersion: "62.0" });
+
+  assert(
+    xml.includes("<!-- LWC Bundles -->") &&
+    xml.includes("<name>LightningComponentBundle</name>") &&
+      xml.includes("<members>orderSummary</members>"),
+    "LWC bundles should be included in package.xml"
+  );
+  assert(
+    xml.includes("<!-- Apex Classes -->") &&
+    xml.includes("<name>ApexClass</name>") &&
+      xml.includes("<members>OrderController</members>") &&
+      xml.includes("<members>PaymentService</members>"),
+    "Apex classes should be included in package.xml"
+  );
+  assert(
+    xml.includes("<!-- Custom Objects and Custom Metadata Types -->") &&
+    xml.includes("<name>CustomObject</name>") &&
+      xml.includes("<members>Invoice__c</members>") &&
+      xml.includes("<members>App_Config__mdt</members>"),
+    "Custom objects and custom metadata types should share the CustomObject manifest type"
+  );
+  assert(
+    xml.includes("<!-- Custom Fields -->") &&
+    xml.includes("<name>CustomField</name>") &&
+      xml.includes("<members>Invoice__c.Amount__c</members>"),
+    "Custom fields should be included in package.xml"
+  );
+  assert(
+    xml.includes("<!-- Custom Labels -->") &&
+    xml.includes("<name>CustomLabel</name>") &&
+      xml.includes("<members>Order_Title</members>"),
+    "Custom labels should be included in package.xml"
+  );
+  assert(
+    xml.includes("<version>62.0</version>"),
+    "package.xml should include the requested API version"
+  );
+}
+
+async function verifyPackageXmlForCustomMetadataRecord() {
+  const workspaceRoot = path.join(__dirname, "..", "test-fixtures", "simple");
+  const result = await runAnalysis(
+    workspaceRoot,
+    path.join("force-app", "main", "default", "customMetadata", "App_Config.Default.md-meta.xml")
+  );
+  const xml = buildPackageXml(result, { apiVersion: "62.0" });
+
+  assert(
+    xml.includes("<!-- Custom Metadata Records -->") &&
+    xml.includes("<name>CustomMetadata</name>") &&
+      xml.includes("<members>App_Config.Default</members>"),
+    "Custom metadata record selections should be included in package.xml"
+  );
+  assert(
+    xml.includes("<name>CustomObject</name>") &&
+      xml.includes("<members>App_Config__mdt</members>"),
+    "Custom metadata records should also include their owning type when the graph depends on it"
   );
 }
 
@@ -168,6 +238,31 @@ async function verifyWarningAggregation() {
     assert(
       !orderControllerResult.warnings.some((warning) => warning.includes("missingBundle")),
       "Unresolved LWC warnings should be scoped to the reachable graph"
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
+async function verifyPackageApiVersionResolution() {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sf-deps-graph-api-version-"));
+  const workspaceRoot = path.join(tempRoot, "workspace");
+
+  try {
+    fs.mkdirSync(workspaceRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(workspaceRoot, "sfdx-project.json"),
+      JSON.stringify({ sourceApiVersion: "64.0" }, null, 2),
+      "utf8"
+    );
+
+    assert(
+      resolvePackageApiVersion(workspaceRoot) === "64.0",
+      "sfdx-project.json sourceApiVersion should drive package.xml version"
+    );
+    assert(
+      resolvePackageApiVersion(path.join(workspaceRoot, "missing")) === DEFAULT_PACKAGE_API_VERSION,
+      "Missing sfdx-project.json should fall back to the default package.xml API version"
     );
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });

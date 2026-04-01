@@ -6,7 +6,7 @@ Phase 2 VS Code extension for extracting downward Salesforce metadata dependenci
 
 - Local source only
 - Direct + transitive dependencies
-- Output includes both graph/tree JSON and an in-editor webview mindmap
+- Output includes graph/tree JSON, a generated `package.xml`, and an in-editor webview mindmap
 - Expand/collapse happens directly on each node inside VS Code
 
 ## Supported metadata in phase 1
@@ -40,10 +40,10 @@ Phase 2 VS Code extension for extracting downward Salesforce metadata dependenci
 
 ## Output
 
-Running `SF Dependencies Graph: Analyze Selection (Mindmap)` now does two things:
+Running `SF Dependencies Graph: Analyze Selection (Mindmap)` now does three things:
 
 - opens an interactive dependency mindmap inside a VS Code webview
-- writes the raw JSON artifact to `.sf-dependencies-graph/` inside the workspace
+- writes the raw JSON artifact and a generated `package.xml` manifest to `.sf-dependencies-graph/` inside the workspace
 
 The mindmap currently supports:
 
@@ -52,6 +52,7 @@ The mindmap currently supports:
 - click the `+` / `-` circle on a node to expand or collapse that branch
 - expand all / collapse branches from the sidebar
 - toggle metadata types on or off to simplify the visible mindmap
+- open the generated JSON export or `package.xml` manifest directly from the sidebar
 - dashed connectors for `confidence: low` heuristic edges
 - shared dependencies may appear as lightweight reference nodes instead of repeating the full subtree
 
@@ -62,6 +63,17 @@ The exported JSON still contains:
 - `tree`
 - `warnings`
 - `assumptions`
+
+The generated `package.xml` currently maps supported nodes to retrieve manifest types as follows:
+
+- `LightningComponentBundle`
+- `AuraDefinitionBundle`
+- `ApexClass`
+- `ApexTrigger`
+- `CustomLabel`
+- `CustomObject` for both custom objects and custom metadata types
+- `CustomField`
+- `CustomMetadata` for custom metadata records
 
 ## Confidence
 

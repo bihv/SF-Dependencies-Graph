@@ -1,0 +1,4 @@
+<aura:component controller="AuraOrderController">
+  <c:orderSummary />
+  <div>{!$Label.c.Order_Title}</div>
+</aura:component>

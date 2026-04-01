@@ -1,0 +1,15 @@
+.DS_Store
+node_modules/
+
+# Salesforce local tooling state
+.sf/
+.sfdx/
+
+# VS Code extension output
+.sf-dependencies-graph/
+*.vsix
+
+# Test and build artifacts
+coverage/
+dist/
+out/

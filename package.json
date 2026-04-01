@@ -1,0 +1,42 @@
+{
+  "name": "sf-dependencies-graph",
+  "displayName": "SF Dependencies Graph",
+  "description": "Analyze Salesforce metadata dependencies from the selected local file or bundle and visualize them in an expandable VS Code mindmap.",
+  "version": "0.0.1",
+  "publisher": "biho-local",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "scripts": {
+    "smoke": "node scripts/smoke-test.js"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:sfDependenciesGraph.analyzeSelection"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "sfDependenciesGraph.analyzeSelection",
+        "title": "SF Dependencies Graph: Analyze Selection (Mindmap)"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "sfDependenciesGraph.analyzeSelection",
+          "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "sfDependenciesGraph.analyzeSelection",
+          "group": "navigation"
+        }
+      ]
+    }
+  }
+}

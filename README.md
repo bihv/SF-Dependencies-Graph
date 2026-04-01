@@ -51,6 +51,7 @@ The mindmap currently supports:
 - double-click node to open the source file
 - click the `+` / `-` circle on a node to expand or collapse that branch
 - expand all / collapse branches from the sidebar
+- toggle metadata types on or off to simplify the visible mindmap
 - dashed connectors for `confidence: low` heuristic edges
 - shared dependencies may appear as lightweight reference nodes instead of repeating the full subtree
 

@@ -12,7 +12,7 @@ function showDependenciesMindmap({ extensionContext, analysis, exportPath }) {
   if (currentPanel) {
     currentPanel.reveal(column);
     currentPanel.title = `SF Dependencies Graph: ${analysis.root.label}`;
-    postCurrentPayload();
+    currentPanel.webview.html = getWebviewHtml(currentPanel.webview);
     return;
   }
 
@@ -252,6 +252,44 @@ function getWebviewHtml(webview) {
       gap: 8px;
     }
 
+    .legend-rows {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .legend-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      padding: 9px 10px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--panel-strong) 84%, transparent);
+    }
+
+    .legend-row input {
+      margin: 0;
+      accent-color: var(--accent);
+      flex: 0 0 auto;
+    }
+
+    .legend-label {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .legend-count {
+      flex: 0 0 auto;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
     button {
       border: 1px solid var(--border);
       background: color-mix(in srgb, var(--panel-strong) 86%, transparent);
@@ -293,6 +331,14 @@ function getWebviewHtml(webview) {
       flex-direction: column;
       gap: 8px;
       min-height: 124px;
+      min-width: 0;
+    }
+
+    #selectedLabel {
+      display: block;
+      min-width: 0;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .selected-path {
@@ -312,15 +358,9 @@ function getWebviewHtml(webview) {
       margin-top: 6px;
     }
 
-    .legend-row {
-      display: grid;
-      grid-template-columns: 14px 1fr;
-      gap: 10px;
-      align-items: center;
-      color: var(--muted);
-    }
-
     .legend-swatch {
+      flex: 0 0 auto;
+      display: inline-block;
       width: 14px;
       height: 14px;
       border-radius: 50%;
@@ -352,9 +392,68 @@ function getWebviewHtml(webview) {
     }
 
     .node-title {
+      font-family: var(--vscode-font-family), sans-serif;
       font-size: 13px;
       font-weight: 700;
+      font-variant-ligatures: none;
+      font-feature-settings: "liga" 0, "clig" 0, "calt" 0, "dlig" 0;
+      text-rendering: geometricPrecision;
       fill: #ffffff;
+    }
+
+    .node-title-fo {
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    .node-title-block {
+      width: 100%;
+      color: #ffffff;
+      font-family: var(--vscode-font-family), sans-serif;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.2;
+      font-variant-ligatures: none;
+      font-feature-settings: "liga" 0, "clig" 0, "calt" 0, "dlig" 0;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      overflow: hidden;
+    }
+
+    .node-title-block.is-field {
+      display: block;
+      -webkit-line-clamp: unset;
+    }
+
+    .node-title-primary {
+      color: #ffffff;
+    }
+
+    .node-subtitle {
+      font-family: var(--vscode-font-family), sans-serif;
+      font-size: 11px;
+      font-weight: 600;
+      font-variant-ligatures: none;
+      font-feature-settings: "liga" 0, "clig" 0, "calt" 0, "dlig" 0;
+      text-rendering: geometricPrecision;
+      fill: rgba(255, 255, 255, 0.92);
+    }
+
+    .node-title-secondary {
+      margin-top: 2px;
+      color: rgba(255, 255, 255, 0.92);
+      font-family: var(--vscode-font-family), sans-serif;
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1.2;
+      font-variant-ligatures: none;
+      font-feature-settings: "liga" 0, "clig" 0, "calt" 0, "dlig" 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .node-meta {
@@ -363,9 +462,13 @@ function getWebviewHtml(webview) {
     }
 
     .node-badge {
+      font-family: var(--vscode-font-family), sans-serif;
       font-size: 10px;
       font-weight: 700;
       letter-spacing: 0.05em;
+      font-variant-ligatures: none;
+      font-feature-settings: "liga" 0, "clig" 0, "calt" 0, "dlig" 0;
+      text-rendering: geometricPrecision;
       fill: rgba(255, 255, 255, 0.94);
       text-transform: uppercase;
     }
@@ -478,7 +581,12 @@ function getWebviewHtml(webview) {
 
       <section class="section legend">
         <div class="eyebrow">Legend</div>
-        <div id="legendRows"></div>
+        <div class="toolbar-actions">
+          <button id="showAllTypesBtn">All types</button>
+          <button id="showRootOnlyBtn">Only root</button>
+        </div>
+        <div id="legendRows" class="legend-rows"></div>
+        <div class="root-type" id="typeFilterSummary"></div>
         <div class="root-type">Dashed connectors indicate low-confidence heuristic matches.</div>
       </section>
 
@@ -515,6 +623,7 @@ function getWebviewHtml(webview) {
     let analysis = null;
     let exportPath = null;
     let edgeByPair = new Map();
+    let visibleTree = null;
 
     const KIND_COLORS = {
       lwcBundle: "#1f8bff",
@@ -528,18 +637,20 @@ function getWebviewHtml(webview) {
       customMetadataRecord: "#5b6cff"
     };
 
-    const NODE_WIDTH = 230;
-    const NODE_HEIGHT = 72;
+    const NODE_WIDTH = 290;
+    const NODE_HEIGHT = 92;
     const HORIZONTAL_GAP = 90;
     const VERTICAL_GAP = 20;
     const PADDING_X = 40;
     const PADDING_Y = 34;
+    let textMeasureContext = null;
 
     const savedState = vscode.getState() || {};
     let tree = null;
     const state = {
       selectedKey: savedState.selectedKey || null,
-      collapsed: new Set(savedState.collapsed || [])
+      collapsed: new Set(savedState.collapsed || []),
+      activeTypes: new Set(savedState.activeTypes || [])
     };
 
     const elements = {
@@ -552,6 +663,7 @@ function getWebviewHtml(webview) {
       edgeCount: document.getElementById("edgeCount"),
       maxDepth: document.getElementById("maxDepth"),
       warningCount: document.getElementById("warningCount"),
+      typeFilterSummary: document.getElementById("typeFilterSummary"),
       selectedLabel: document.getElementById("selectedLabel"),
       selectedType: document.getElementById("selectedType"),
       selectedPath: document.getElementById("selectedPath"),
@@ -559,7 +671,9 @@ function getWebviewHtml(webview) {
       assumptionList: document.getElementById("assumptionList"),
       legendRows: document.getElementById("legendRows"),
       openNodeBtn: document.getElementById("openNodeBtn"),
-      openExportBtn: document.getElementById("openExportBtn")
+      openExportBtn: document.getElementById("openExportBtn"),
+      showAllTypesBtn: document.getElementById("showAllTypesBtn"),
+      showRootOnlyBtn: document.getElementById("showRootOnlyBtn")
     };
 
     document.getElementById("expandAllBtn").addEventListener("click", () => {
@@ -574,13 +688,13 @@ function getWebviewHtml(webview) {
     });
 
     document.getElementById("focusRootBtn").addEventListener("click", () => {
-      state.selectedKey = tree?.key || null;
+      state.selectedKey = visibleTree?.key || tree?.key || null;
       render();
       scrollToSelected();
     });
 
     elements.openNodeBtn.addEventListener("click", () => {
-      const node = findNodeByKey(tree, state.selectedKey);
+      const node = findNodeByKey(visibleTree || tree, state.selectedKey);
       if (node?.path) {
         vscode.postMessage({ type: "openNode", path: node.path });
       }
@@ -607,9 +721,21 @@ function getWebviewHtml(webview) {
         ])
       );
       tree = hydrateTree(analysis?.tree || null);
+      visibleTree = null;
       state.selectedKey = tree?.key || null;
       state.collapsed = new Set(defaultCollapsedKeys(tree));
+      syncActiveTypes();
       renderStaticMeta();
+      render();
+    });
+
+    elements.showAllTypesBtn.addEventListener("click", () => {
+      state.activeTypes = new Set(getTypeEntries().map(([metadataType]) => metadataType));
+      render();
+    });
+
+    elements.showRootOnlyBtn.addEventListener("click", () => {
+      state.activeTypes.clear();
       render();
     });
 
@@ -620,9 +746,6 @@ function getWebviewHtml(webview) {
     function renderStaticMeta() {
       elements.rootTitle.textContent = analysis?.root?.label || "Waiting for analysis";
       elements.rootType.textContent = analysis?.root?.metadataType || "";
-      elements.nodeCount.textContent = String(analysis?.summary?.nodeCount || 0);
-      elements.edgeCount.textContent = String(analysis?.summary?.edgeCount || 0);
-      elements.maxDepth.textContent = String(analysis?.summary?.maxDepth || 0);
       elements.warningCount.textContent = String((analysis?.warnings || []).length);
 
       renderList(elements.warningList, analysis?.warnings || ["No warnings"]);
@@ -631,7 +754,12 @@ function getWebviewHtml(webview) {
     }
 
     function render() {
-      const selectedNode = findNodeByKey(tree, state.selectedKey) || tree;
+      visibleTree = filterTreeForActiveTypes(tree);
+      const filteredSummary = summarizeVisibleGraph(visibleTree);
+      renderGraphSummary(filteredSummary);
+      renderLegend();
+
+      const selectedNode = findNodeByKey(visibleTree, state.selectedKey) || visibleTree;
       if (selectedNode) {
         state.selectedKey = selectedNode.key;
       }
@@ -642,7 +770,7 @@ function getWebviewHtml(webview) {
       elements.openNodeBtn.disabled = !selectedNode?.path;
       elements.openExportBtn.disabled = !exportPath;
 
-      if (!analysis || !tree) {
+      if (!analysis || !visibleTree) {
         elements.svg.innerHTML = "";
         elements.empty.style.display = analysis ? "block" : "none";
         return;
@@ -650,7 +778,7 @@ function getWebviewHtml(webview) {
 
       elements.empty.style.display = "none";
 
-      const measured = measureTree(tree, 0);
+      const measured = measureTree(visibleTree, 0);
       const layout = positionTree(measured, PADDING_Y);
       const nodes = [];
       const links = [];
@@ -677,7 +805,7 @@ function getWebviewHtml(webview) {
         });
 
         element.addEventListener("dblclick", () => {
-          const node = findNodeByKey(tree, element.getAttribute("data-node-key"));
+          const node = findNodeByKey(visibleTree, element.getAttribute("data-node-key"));
           if (node?.path) {
             vscode.postMessage({ type: "openNode", path: node.path });
           }
@@ -704,7 +832,8 @@ function getWebviewHtml(webview) {
     function persistState() {
       vscode.setState({
         selectedKey: state.selectedKey,
-        collapsed: Array.from(state.collapsed)
+        collapsed: Array.from(state.collapsed),
+        activeTypes: Array.from(state.activeTypes)
       });
     }
 
@@ -764,21 +893,181 @@ function getWebviewHtml(webview) {
     }
 
     function renderLegend() {
-      const kinds = Array.from(
-        new Map((analysis?.graph?.nodes || []).map((node) => [node.kind, node.metadataType])).entries()
+      const typeEntries = getTypeEntries();
+      const kindByMetadataType = new Map(
+        (analysis?.graph?.nodes || []).map((node) => [node.metadataType || node.kind || "Unknown", node.kind])
       );
+      const activeCount = typeEntries.filter(([metadataType]) => state.activeTypes.has(metadataType)).length;
 
-      elements.legendRows.innerHTML = kinds
-        .map(([kind, metadataType]) => {
+      if (!typeEntries.length) {
+        elements.legendRows.innerHTML = '<div class="root-type">No metadata types available.</div>';
+        elements.typeFilterSummary.textContent = "";
+        return;
+      }
+
+      elements.legendRows.innerHTML = typeEntries
+        .map(([metadataType, count]) => {
+          const kind = kindByMetadataType.get(metadataType);
           const color = KIND_COLORS[kind] || "#888888";
+          const checked = state.activeTypes.has(metadataType) ? " checked" : "";
+          const filterId = "type-filter-" + sanitizeKeyPart(metadataType);
           return (
-            '<div class="legend-row">' +
+            '<label class="legend-row" for="' + escapeAttribute(filterId) + '">' +
+              '<input id="' + escapeAttribute(filterId) + '" type="checkbox" data-type-filter="' + escapeAttribute(metadataType) + '"' + checked + '>' +
               '<span class="legend-swatch" style="background:' + color + '"></span>' +
-              "<span>" + escapeHtml(metadataType || kind) + "</span>" +
-            "</div>"
+              '<span class="legend-label">' + escapeHtml(metadataType) + "</span>" +
+              '<span class="legend-count">' + count + "</span>" +
+            "</label>"
           );
         })
         .join("");
+
+      elements.typeFilterSummary.textContent =
+        activeCount + " / " + typeEntries.length + " types visible. Root node is always shown.";
+
+      for (const input of elements.legendRows.querySelectorAll("[data-type-filter]")) {
+        input.addEventListener("change", () => {
+          const metadataType = input.getAttribute("data-type-filter");
+          if (!metadataType) {
+            return;
+          }
+
+          if (input.checked) {
+            state.activeTypes.add(metadataType);
+          } else {
+            state.activeTypes.delete(metadataType);
+          }
+
+          render();
+        });
+      }
+    }
+
+    function getTypeEntries() {
+      const counts = new Map();
+
+      for (const node of analysis?.graph?.nodes || []) {
+        const metadataType = node.metadataType || node.kind || "Unknown";
+        counts.set(metadataType, (counts.get(metadataType) || 0) + 1);
+      }
+
+      const rootType = analysis?.root?.metadataType || "";
+      return Array.from(counts.entries()).sort(([left], [right]) => {
+        if (left === rootType && right !== rootType) {
+          return -1;
+        }
+        if (right === rootType && left !== rootType) {
+          return 1;
+        }
+        return left.localeCompare(right);
+      });
+    }
+
+    function syncActiveTypes() {
+      state.activeTypes = new Set(getTypeEntries().map(([metadataType]) => metadataType));
+    }
+
+    function renderGraphSummary(summary) {
+      elements.nodeCount.textContent = formatSummaryCount(
+        summary.nodeCount,
+        analysis?.summary?.nodeCount || 0
+      );
+      elements.edgeCount.textContent = formatSummaryCount(
+        summary.edgeCount,
+        analysis?.summary?.edgeCount || 0
+      );
+      elements.maxDepth.textContent = formatSummaryCount(
+        summary.maxDepth,
+        analysis?.summary?.maxDepth || 0
+      );
+    }
+
+    function formatSummaryCount(visible, total) {
+      if (!total || visible === total) {
+        return String(visible);
+      }
+
+      return visible + " / " + total;
+    }
+
+    function summarizeVisibleGraph(node) {
+      const visibleNodeIds = collectVisibleNodeIds(node);
+      const visibleEdgeCount = (analysis?.graph?.edges || []).filter((edge) =>
+        visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to)
+      ).length;
+
+      return {
+        nodeCount: visibleNodeIds.size,
+        edgeCount: visibleEdgeCount,
+        maxDepth: summarizeVisibleDepth(node)
+      };
+    }
+
+    function collectVisibleNodeIds(node, acc = new Set()) {
+      if (!node) {
+        return acc;
+      }
+
+      acc.add(node.id);
+
+      for (const child of node.children || []) {
+        collectVisibleNodeIds(child, acc);
+      }
+
+      return acc;
+    }
+
+    function summarizeVisibleDepth(node, depth = 0) {
+      if (!node) {
+        return 0;
+      }
+
+      let maxDepth = depth;
+
+      for (const child of node.children || []) {
+        maxDepth = Math.max(maxDepth, summarizeVisibleDepth(child, depth + 1));
+      }
+
+      return maxDepth;
+    }
+
+    function filterTreeForActiveTypes(node) {
+      if (!node) {
+        return null;
+      }
+
+      const visibleChildren = [];
+      for (const child of node.children || []) {
+        const childResults = collectFilteredNodes(child);
+        visibleChildren.push(...childResults);
+      }
+
+      return {
+        ...node,
+        children: visibleChildren
+      };
+    }
+
+    function collectFilteredNodes(node) {
+      if (!node) {
+        return [];
+      }
+
+      const visibleChildren = [];
+      for (const child of node.children || []) {
+        visibleChildren.push(...collectFilteredNodes(child));
+      }
+
+      if (state.activeTypes.has(node.metadataType || "")) {
+        return [
+          {
+            ...node,
+            children: visibleChildren
+          }
+        ];
+      }
+
+      return visibleChildren;
     }
 
     function measureTree(node, depth) {
@@ -858,8 +1147,19 @@ function getWebviewHtml(webview) {
       const hasChildren = (node.children || []).length > 0;
       const isCollapsed = state.collapsed.has(node.key);
       const badge = node.cycle ? "Cycle" : node.kind.replace(/([A-Z])/g, " $1");
-      const resolvedBadge = node.reference ? "Ref" : badge;
+      const resolvedBadge = trimLabel(node.reference ? "Ref" : badge, 20);
       const icon = isCollapsed ? "+" : "-";
+      const textLeftPadding = 18;
+      const textRightPadding = hasChildren ? 28 : 18;
+      const textX = node.x + textLeftPadding;
+      const titleWidth = NODE_WIDTH - textLeftPadding - textRightPadding;
+      const titleMarkup = renderNodeTitle(node, textX, node.y + 48, titleWidth);
+      const tooltip = escapeHtml(
+        [
+          node.label || "",
+          node.metadataType || ""
+        ].filter(Boolean).join(" | ")
+      );
 
       const outline = isSelected
         ? '<rect class="selected-outline" x="' + (node.x - 4) + '" y="' + (node.y - 4) + '" rx="18" ry="18" width="' + (NODE_WIDTH + 8) + '" height="' + (NODE_HEIGHT + 8) + '"></rect>'
@@ -878,11 +1178,11 @@ function getWebviewHtml(webview) {
         '<g class="node-card">' +
           outline +
           '<g class="node-body" data-node-key="' + escapeAttribute(node.key) + '">' +
+            "<title>" + tooltip + "</title>" +
             '<rect x="' + node.x + '" y="' + node.y + '" rx="16" ry="16" width="' + NODE_WIDTH + '" height="' + NODE_HEIGHT + '" fill="' + color + '"></rect>' +
-            '<rect x="' + (node.x + 14) + '" y="' + (node.y + 12) + '" rx="9" ry="9" width="86" height="20" fill="rgba(255,255,255,0.15)"></rect>' +
+            '<rect x="' + (node.x + 14) + '" y="' + (node.y + 12) + '" rx="9" ry="9" width="122" height="20" fill="rgba(255,255,255,0.15)"></rect>' +
             '<text class="node-badge" x="' + (node.x + 24) + '" y="' + (node.y + 26) + '">' + escapeHtml(resolvedBadge) + "</text>" +
-            '<text class="node-title" x="' + (node.x + 18) + '" y="' + (node.y + 48) + '">' + escapeHtml(trimLabel(node.label, 26)) + "</text>" +
-            '<text class="node-meta" x="' + (node.x + 18) + '" y="' + (node.y + 64) + '">' + escapeHtml(trimLabel(node.metadataType || "", 30)) + "</text>" +
+            titleMarkup +
           "</g>" +
           toggle +
         "</g>"
@@ -910,6 +1210,185 @@ function getWebviewHtml(webview) {
 
     function isDescendantKey(ancestorKey, descendantKey) {
       return descendantKey === ancestorKey || descendantKey.startsWith(ancestorKey + ".");
+    }
+
+    function buildNodeTitleLines(node, titleWidth) {
+      const label = String(node.label || "");
+      const titleFont = getNodeFont("node-title");
+
+      if (node.kind === "customField" && label.includes(".")) {
+        const separatorIndex = label.lastIndexOf(".");
+        const parentName = label.slice(0, separatorIndex);
+        const childName = label.slice(separatorIndex + 1);
+
+        return [
+          {
+            className: "node-title",
+            text: trimTextToWidth(childName, titleFont, titleWidth)
+          },
+          {
+            className: "node-subtitle",
+            text: trimTextToWidth(parentName, getNodeFont("node-subtitle"), titleWidth)
+          }
+        ];
+      }
+
+      return [{
+        className: "node-title",
+        text: trimTextToWidth(label, titleFont, titleWidth)
+      }];
+    }
+
+    function renderNodeTitle(node, x, y, width) {
+      const label = String(node.label || "");
+
+      if (node.kind === "customField" && label.includes(".")) {
+        const separatorIndex = label.lastIndexOf(".");
+        const parentName = label.slice(0, separatorIndex);
+        const childName = label.slice(separatorIndex + 1);
+
+        return (
+          '<foreignObject class="node-title-fo" x="' + x + '" y="' + y + '" width="' + width + '" height="34">' +
+            '<div xmlns="http://www.w3.org/1999/xhtml" class="node-title-block is-field">' +
+              '<div class="node-title-primary">' + escapeHtml(childName) + "</div>" +
+              '<div class="node-title-secondary">' + escapeHtml(parentName) + "</div>" +
+            "</div>" +
+          "</foreignObject>"
+        );
+      }
+
+      return (
+        '<foreignObject class="node-title-fo" x="' + x + '" y="' + y + '" width="' + width + '" height="34">' +
+          '<div xmlns="http://www.w3.org/1999/xhtml" class="node-title-block">' +
+            '<div class="node-title-primary">' + escapeHtml(label) + "</div>" +
+          "</div>" +
+        "</foreignObject>"
+      );
+    }
+
+    function renderTextLine(className, x, y, value, width) {
+      return '<text class="' + className + '" x="' + x + '" y="' + y + '">' + escapeHtml(value) + "</text>";
+    }
+
+    function wrapLabelToWidth(value, maxWidth, maxLines, font) {
+      const normalized = String(value || "").trim();
+      if (!normalized) {
+        return [""];
+      }
+
+      const tokens = tokenizeLabel(normalized);
+      const lines = [];
+      let currentLine = "";
+      let tokenIndex = 0;
+
+      while (tokenIndex < tokens.length && lines.length < maxLines) {
+        const token = tokens[tokenIndex];
+
+        if (!currentLine && measureTextWidth(token, font) > maxWidth) {
+          const splitIndex = findSplitIndexForWidth(token, maxWidth, font);
+          const split = token.slice(0, splitIndex);
+          const remainder = token.slice(splitIndex);
+
+          if (lines.length === maxLines - 1) {
+            lines.push(trimTextToWidth(token + tokens.slice(tokenIndex + 1).join(""), font, maxWidth));
+            return lines;
+          }
+
+          lines.push(split);
+          tokens[tokenIndex] = remainder;
+          continue;
+        }
+
+        if (measureTextWidth(currentLine + token, font) <= maxWidth) {
+          currentLine += token;
+          tokenIndex += 1;
+          continue;
+        }
+
+        if (lines.length === maxLines - 1) {
+          lines.push(trimTextToWidth((currentLine + tokens.slice(tokenIndex).join("")).trim(), font, maxWidth));
+          return lines;
+        }
+
+        lines.push(currentLine.trimEnd());
+        currentLine = "";
+      }
+
+      if (currentLine) {
+        lines.push(currentLine.trimEnd());
+      }
+
+      return lines;
+    }
+
+    function tokenizeLabel(value) {
+      const matches = value.match(/[^._\-\s]+(?:[._-]|\s+)?|[._-]+/g);
+      return matches && matches.length > 0 ? matches : [value];
+    }
+
+    function getNodeFont(className) {
+      const fontFamily = getComputedStyle(document.body).fontFamily || "sans-serif";
+      if (className === "node-subtitle") {
+        return "600 11px " + fontFamily;
+      }
+      return "700 13px " + fontFamily;
+    }
+
+    function getTextMeasureContext() {
+      if (!textMeasureContext) {
+        textMeasureContext = document.createElement("canvas").getContext("2d");
+      }
+      return textMeasureContext;
+    }
+
+    function measureTextWidth(value, font) {
+      const context = getTextMeasureContext();
+      context.font = font;
+      return context.measureText(String(value || "")).width;
+    }
+
+    function findSplitIndexForWidth(value, maxWidth, font) {
+      let low = 1;
+      let high = value.length;
+      let best = 1;
+
+      while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        if (measureTextWidth(value.slice(0, mid), font) <= maxWidth) {
+          best = mid;
+          low = mid + 1;
+        } else {
+          high = mid - 1;
+        }
+      }
+
+      return best;
+    }
+
+    function trimTextToWidth(value, font, maxWidth) {
+      const normalized = String(value || "");
+      if (!normalized || measureTextWidth(normalized, font) <= maxWidth) {
+        return normalized;
+      }
+
+      const ellipsis = "...";
+      const ellipsisWidth = measureTextWidth(ellipsis, font);
+      let low = 0;
+      let high = normalized.length;
+      let best = "";
+
+      while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        const candidate = normalized.slice(0, mid).trimEnd();
+        if (measureTextWidth(candidate, font) + ellipsisWidth <= maxWidth) {
+          best = candidate;
+          low = mid + 1;
+        } else {
+          high = mid - 1;
+        }
+      }
+
+      return best ? best + ellipsis : ellipsis;
     }
 
     function trimLabel(value, max) {

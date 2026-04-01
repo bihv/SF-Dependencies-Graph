@@ -144,6 +144,7 @@ function getWebviewHtml(webview) {
     .app {
       display: grid;
       grid-template-columns: minmax(260px, 320px) 1fr;
+      width: 100vw;
       height: 100vh;
       overflow: hidden;
     }
@@ -161,6 +162,7 @@ function getWebviewHtml(webview) {
     }
 
     .canvas-shell {
+      width: 100%;
       min-width: 0;
       min-height: 0;
       display: flex;
@@ -169,11 +171,13 @@ function getWebviewHtml(webview) {
     }
 
     .topbar {
+      width: 100%;
+      align-self: stretch;
       display: flex;
       justify-content: space-between;
       align-items: center;
       gap: 12px;
-      padding: 14px 18px;
+      padding: 14px 32px 14px 24px;
       border-bottom: 1px solid var(--border);
       background: color-mix(in srgb, var(--panel-strong) 92%, transparent);
       backdrop-filter: blur(10px);
@@ -576,6 +580,9 @@ function getWebviewHtml(webview) {
           <strong id="selectedLabel">No node selected</strong>
           <span id="selectedType" class="root-type"></span>
           <div id="selectedPath" class="selected-path"></div>
+          <div class="toolbar-actions">
+            <button id="jumpToOriginalBtn" disabled>Jump to original</button>
+          </div>
         </div>
       </section>
 
@@ -667,6 +674,7 @@ function getWebviewHtml(webview) {
       selectedLabel: document.getElementById("selectedLabel"),
       selectedType: document.getElementById("selectedType"),
       selectedPath: document.getElementById("selectedPath"),
+      jumpToOriginalBtn: document.getElementById("jumpToOriginalBtn"),
       warningList: document.getElementById("warningList"),
       assumptionList: document.getElementById("assumptionList"),
       legendRows: document.getElementById("legendRows"),
@@ -698,6 +706,10 @@ function getWebviewHtml(webview) {
       if (node?.path) {
         vscode.postMessage({ type: "openNode", path: node.path });
       }
+    });
+
+    elements.jumpToOriginalBtn.addEventListener("click", () => {
+      jumpToOriginalNode();
     });
 
     elements.openExportBtn.addEventListener("click", () => {
@@ -768,6 +780,7 @@ function getWebviewHtml(webview) {
       elements.selectedType.textContent = selectedNode?.metadataType || "";
       elements.selectedPath.textContent = selectedNode?.path || "";
       elements.openNodeBtn.disabled = !selectedNode?.path;
+      elements.jumpToOriginalBtn.disabled = !selectedNode?.reference;
       elements.openExportBtn.disabled = !exportPath;
 
       if (!analysis || !visibleTree) {
@@ -844,6 +857,26 @@ function getWebviewHtml(webview) {
       }
     }
 
+    function jumpToOriginalNode() {
+      const selectedNode = findNodeByKey(visibleTree || tree, state.selectedKey);
+      if (!selectedNode?.reference) {
+        return;
+      }
+
+      const targetPath = findOriginalNodePath(tree, selectedNode.id);
+      if (!targetPath || targetPath.length === 0) {
+        return;
+      }
+
+      for (const ancestorKey of targetPath.slice(0, -1)) {
+        state.collapsed.delete(ancestorKey);
+      }
+
+      state.selectedKey = targetPath[targetPath.length - 1];
+      render();
+      requestAnimationFrame(scrollToSelected);
+    }
+
     function hydrateTree(node, parentKey = "", depth = 0, index = 0) {
       if (!node) {
         return null;
@@ -865,6 +898,26 @@ function getWebviewHtml(webview) {
 
     function sanitizeKeyPart(value) {
       return String(value || "node").replace(/[^a-zA-Z0-9_.:-]/g, "_");
+    }
+
+    function findOriginalNodePath(node, nodeId, path = []) {
+      if (!node) {
+        return null;
+      }
+
+      const nextPath = path.concat(node.key);
+      if (node.id === nodeId && !node.reference) {
+        return nextPath;
+      }
+
+      for (const child of node.children || []) {
+        const match = findOriginalNodePath(child, nodeId, nextPath);
+        if (match) {
+          return match;
+        }
+      }
+
+      return null;
     }
 
     function defaultCollapsedKeys(node, expandedDepth = 2, acc = []) {
@@ -1147,7 +1200,29 @@ function getWebviewHtml(webview) {
       const hasChildren = (node.children || []).length > 0;
       const isCollapsed = state.collapsed.has(node.key);
       const badge = node.cycle ? "Cycle" : node.kind.replace(/([A-Z])/g, " $1");
-      const resolvedBadge = trimLabel(node.reference ? "Ref" : badge, 20);
+      const badgeFont = getNodeFont("node-badge");
+      const badgeLetterSpacing = getNodeLetterSpacing("node-badge");
+      const badgeMaxWidth = NODE_WIDTH - 28;
+      const badgeHorizontalPadding = 20;
+      const resolvedBadge = trimTextToWidth(
+        node.reference ? "Ref" : badge,
+        badgeFont,
+        badgeMaxWidth - badgeHorizontalPadding,
+        badgeLetterSpacing
+      );
+      const badgeWidth = Math.max(
+        44,
+        Math.min(
+          badgeMaxWidth,
+          Math.ceil(
+            measureTextWidth(
+              String(resolvedBadge || "").toUpperCase(),
+              badgeFont,
+              badgeLetterSpacing
+            ) + badgeHorizontalPadding
+          )
+        )
+      );
       const icon = isCollapsed ? "+" : "-";
       const textLeftPadding = 18;
       const textRightPadding = hasChildren ? 28 : 18;
@@ -1180,7 +1255,7 @@ function getWebviewHtml(webview) {
           '<g class="node-body" data-node-key="' + escapeAttribute(node.key) + '">' +
             "<title>" + tooltip + "</title>" +
             '<rect x="' + node.x + '" y="' + node.y + '" rx="16" ry="16" width="' + NODE_WIDTH + '" height="' + NODE_HEIGHT + '" fill="' + color + '"></rect>' +
-            '<rect x="' + (node.x + 14) + '" y="' + (node.y + 12) + '" rx="9" ry="9" width="122" height="20" fill="rgba(255,255,255,0.15)"></rect>' +
+            '<rect x="' + (node.x + 14) + '" y="' + (node.y + 12) + '" rx="9" ry="9" width="' + badgeWidth + '" height="20" fill="rgba(255,255,255,0.15)"></rect>' +
             '<text class="node-badge" x="' + (node.x + 24) + '" y="' + (node.y + 26) + '">' + escapeHtml(resolvedBadge) + "</text>" +
             titleMarkup +
           "</g>" +
@@ -1328,10 +1403,20 @@ function getWebviewHtml(webview) {
 
     function getNodeFont(className) {
       const fontFamily = getComputedStyle(document.body).fontFamily || "sans-serif";
+      if (className === "node-badge") {
+        return "700 10px " + fontFamily;
+      }
       if (className === "node-subtitle") {
         return "600 11px " + fontFamily;
       }
       return "700 13px " + fontFamily;
+    }
+
+    function getNodeLetterSpacing(className) {
+      if (className === "node-badge") {
+        return 0.5;
+      }
+      return 0;
     }
 
     function getTextMeasureContext() {
@@ -1341,20 +1426,22 @@ function getWebviewHtml(webview) {
       return textMeasureContext;
     }
 
-    function measureTextWidth(value, font) {
+    function measureTextWidth(value, font, letterSpacing = 0) {
       const context = getTextMeasureContext();
+      const normalized = String(value || "");
       context.font = font;
-      return context.measureText(String(value || "")).width;
+      const baseWidth = context.measureText(normalized).width;
+      return baseWidth + Math.max(0, normalized.length - 1) * letterSpacing;
     }
 
-    function findSplitIndexForWidth(value, maxWidth, font) {
+    function findSplitIndexForWidth(value, maxWidth, font, letterSpacing = 0) {
       let low = 1;
       let high = value.length;
       let best = 1;
 
       while (low <= high) {
         const mid = Math.floor((low + high) / 2);
-        if (measureTextWidth(value.slice(0, mid), font) <= maxWidth) {
+        if (measureTextWidth(value.slice(0, mid), font, letterSpacing) <= maxWidth) {
           best = mid;
           low = mid + 1;
         } else {
@@ -1365,14 +1452,13 @@ function getWebviewHtml(webview) {
       return best;
     }
 
-    function trimTextToWidth(value, font, maxWidth) {
+    function trimTextToWidth(value, font, maxWidth, letterSpacing = 0) {
       const normalized = String(value || "");
-      if (!normalized || measureTextWidth(normalized, font) <= maxWidth) {
+      if (!normalized || measureTextWidth(normalized, font, letterSpacing) <= maxWidth) {
         return normalized;
       }
 
       const ellipsis = "...";
-      const ellipsisWidth = measureTextWidth(ellipsis, font);
       let low = 0;
       let high = normalized.length;
       let best = "";
@@ -1380,7 +1466,7 @@ function getWebviewHtml(webview) {
       while (low <= high) {
         const mid = Math.floor((low + high) / 2);
         const candidate = normalized.slice(0, mid).trimEnd();
-        if (measureTextWidth(candidate, font) + ellipsisWidth <= maxWidth) {
+        if (measureTextWidth(candidate + ellipsis, font, letterSpacing) <= maxWidth) {
           best = candidate;
           low = mid + 1;
         } else {

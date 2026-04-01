@@ -1,24 +1,16 @@
 "use strict";
 
+const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { analyzeSelection, buildTree } = require("../src/analyzer");
 
 async function main() {
   const workspaceRoot = path.join(__dirname, "..", "test-fixtures", "simple");
-  const targetPath = path.join(
+  const result = await runAnalysis(
     workspaceRoot,
-    "force-app",
-    "main",
-    "default",
-    "lwc",
-    "orderSummary"
+    path.join("force-app", "main", "default", "lwc", "orderSummary")
   );
-
-  const result = await analyzeSelection({
-    workspaceFolder: { uri: { fsPath: workspaceRoot } },
-    targetUri: { fsPath: targetPath },
-    progress: { report() {} }
-  });
 
   assert(result.root.id === "lwc:orderSummary", "Root node should be orderSummary LWC");
   assert(
@@ -53,14 +45,21 @@ async function main() {
     ),
     "OrderController should reference ItemService"
   );
+  assertWarningIncludes(
+    result.warnings,
+    "low-confidence heuristic edges",
+    "Low-confidence heuristic warnings should be surfaced"
+  );
 
   verifyCompactTree();
+  await verifyWarningAggregation();
 
   console.log(
     JSON.stringify(
       {
         summary: result.summary,
         root: result.root,
+        warnings: result.warnings,
         sampleEdges: result.graph.edges.slice(0, 6)
       },
       null,
@@ -94,6 +93,99 @@ function verifyCompactTree() {
   assert(
     rightBranchShared.children.length === 0,
     "Reference leaf should not duplicate the shared subtree"
+  );
+}
+
+async function verifyWarningAggregation() {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sf-deps-graph-warning-"));
+  const workspaceRoot = path.join(tempRoot, "workspace");
+
+  try {
+    fs.cpSync(
+      path.join(__dirname, "..", "test-fixtures", "simple"),
+      workspaceRoot,
+      { recursive: true }
+    );
+
+    const lwcPath = path.join(
+      workspaceRoot,
+      "force-app",
+      "main",
+      "default",
+      "lwc",
+      "orderSummary",
+      "orderSummary.js"
+    );
+
+    fs.appendFileSync(
+      lwcPath,
+      [
+        "",
+        'import missingLwc from "c/missingBundle";',
+        'import missingApex from "@salesforce/apex/MissingController.run";',
+        'import missingLabel from "@salesforce/label/c.Missing_Label";',
+        'import missingSchema from "@salesforce/schema/Missing_Object__c";',
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await runAnalysis(
+      workspaceRoot,
+      path.join("force-app", "main", "default", "lwc", "orderSummary")
+    );
+
+    assertWarningIncludes(
+      result.warnings,
+      "Unresolved LWC bundle reference from orderSummary (1) via LWC import: missingBundle",
+      "Missing local LWC imports should generate a warning"
+    );
+    assertWarningIncludes(
+      result.warnings,
+      "Unresolved Apex class reference from orderSummary (1) via Apex import: MissingController",
+      "Missing Apex imports should generate a warning"
+    );
+    assertWarningIncludes(
+      result.warnings,
+      "Unresolved Custom Label reference from orderSummary (1) via Label import: Missing_Label",
+      "Missing custom labels should generate a warning"
+    );
+    assertWarningIncludes(
+      result.warnings,
+      "Unresolved schema reference from orderSummary (1) via LWC schema import: Missing_Object__c",
+      "Missing custom schema tokens should generate a warning"
+    );
+
+    const orderControllerResult = await runAnalysis(
+      workspaceRoot,
+      path.join("force-app", "main", "default", "classes", "OrderController.cls")
+    );
+
+    assert(
+      !orderControllerResult.warnings.some((warning) => warning.includes("MissingController")),
+      "Warnings from unrelated nodes should not bleed into another root selection"
+    );
+    assert(
+      !orderControllerResult.warnings.some((warning) => warning.includes("missingBundle")),
+      "Unresolved LWC warnings should be scoped to the reachable graph"
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
+async function runAnalysis(workspaceRoot, targetRelativePath) {
+  return analyzeSelection({
+    workspaceFolder: { uri: { fsPath: workspaceRoot } },
+    targetUri: { fsPath: path.join(workspaceRoot, targetRelativePath) },
+    progress: { report() {} }
+  });
+}
+
+function assertWarningIncludes(warnings, fragment, message) {
+  assert(
+    warnings.some((warning) => warning.includes(fragment)),
+    `${message}. Missing fragment: ${fragment}`
   );
 }
 

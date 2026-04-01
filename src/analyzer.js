@@ -118,7 +118,9 @@ function buildIndex(workspaceRoot, files) {
     customMetadataTypesByName: new Map(),
     customMetadataRecordsByName: new Map(),
     dependencies: new Map(),
-    warnings: []
+    warnings: [],
+    warningKeys: new Set(),
+    unresolvedReferences: new Map()
   };
 
   for (const filePath of files) {
@@ -220,7 +222,7 @@ function registerMetadataNode(index, filePath) {
   }
 
   if (path.basename(filePath) === "CustomLabels.labels-meta.xml") {
-    const content = safeRead(filePath);
+    const content = safeRead(index, filePath);
     const labels = matchAll(content, /<fullName>([^<]+)<\/fullName>/g);
     for (const labelName of labels) {
       const node = {
@@ -342,7 +344,7 @@ function extractDependencies(index, node) {
 
 function extractLwcDependencies(index, node) {
   const deps = [];
-  const bundleText = joinNodeFiles(node);
+  const bundleText = joinNodeFiles(index, node);
 
   for (const specifier of matchAll(bundleText, /from\s+['"]c\/([a-zA-Z0-9_]+)['"]/g)) {
     addDependencyByName(index, deps, node, "lwc", specifier, {
@@ -386,12 +388,12 @@ function extractLwcDependencies(index, node) {
 
 function extractAuraDependencies(index, node) {
   const deps = [];
-  const bundleText = joinNodeFiles(node);
+  const bundleText = joinNodeFiles(index, node);
+  const componentRegex = /<([a-zA-Z0-9_]+):([A-Z_a-z][a-zA-Z0-9_]*)\b/g;
 
-  for (const componentName of matchAll(
-    bundleText,
-    /<(?:c|[a-zA-Z0-9_]+):([A-Z_a-z][a-zA-Z0-9_]*)\b/g
-  )) {
+  for (const match of bundleText.matchAll(componentRegex)) {
+    const namespace = match[1];
+    const componentName = match[2];
     const matchedId =
       index.auraByName.get(componentName.toLowerCase()) ||
       index.lwcByName.get(componentName.toLowerCase());
@@ -400,6 +402,11 @@ function extractAuraDependencies(index, node) {
       deps.push(
         createDependency(node.id, matchedId, "usesComponent", "high", "Aura markup")
       );
+      continue;
+    }
+
+    if (namespace === "c") {
+      recordUnresolvedReference(index, node, "Aura/LWC component", componentName, "Aura markup");
     }
   }
 
@@ -430,7 +437,7 @@ function extractAuraDependencies(index, node) {
 
 function extractApexDependencies(index, node, isTrigger) {
   const deps = [];
-  const source = stripCommentsAndStrings(joinNodeFiles(node));
+  const source = stripCommentsAndStrings(joinNodeFiles(index, node));
 
   if (isTrigger) {
     const triggerObject = matchFirst(source, /\btrigger\s+\w+\s+on\s+([A-Za-z0-9_]+)\s*\(/);
@@ -450,7 +457,7 @@ function extractApexDependencies(index, node, isTrigger) {
     });
   }
 
-  for (const objectName of matchAll(source, /\b([A-Za-z][A-Za-z0-9_]*__(?:c|mdt))\b/g)) {
+  for (const objectName of matchAll(source, /(?<!\.)\b([A-Za-z][A-Za-z0-9_]*__(?:c|mdt))\b/g)) {
     addSchemaDependency(index, deps, node, objectName, "Apex custom schema token");
   }
 
@@ -482,7 +489,7 @@ function extractApexDependencies(index, node, isTrigger) {
 
 function extractFieldDependencies(index, node) {
   const deps = [];
-  const xml = safeRead(node.path);
+  const xml = safeRead(index, node.path);
 
   const referenceTos = matchAll(xml, /<referenceTo>([^<]+)<\/referenceTo>/g);
   for (const referenceTo of referenceTos) {
@@ -549,6 +556,10 @@ function addSchemaDependency(index, deps, node, token, source) {
     deps.push(createDependency(node.id, objectId, "usesObject", "high", source));
     return;
   }
+
+  if (looksLikeCustomSchemaToken(token)) {
+    recordUnresolvedReference(index, node, "schema", token, source);
+  }
 }
 
 function addDependencyByName(index, deps, node, registry, rawName, options) {
@@ -567,6 +578,20 @@ function addDependencyByName(index, deps, node, registry, rawName, options) {
 
   const targetId = map.get(normalized);
   if (!targetId) {
+    const categoryByRegistry = {
+      lwc: "LWC bundle",
+      aura: "Aura bundle",
+      apex: "Apex class",
+      label: "Custom Label",
+      object: "Custom Object"
+    };
+    recordUnresolvedReference(
+      index,
+      node,
+      categoryByRegistry[registry] || "metadata",
+      rawName,
+      options.source
+    );
     return;
   }
 
@@ -677,6 +702,16 @@ function traverseDependencies(index, rootId) {
     }
   }
 
+  appendUnresolvedReferenceWarnings(index, warnings, visited);
+
+  const lowConfidenceEdges = edges.filter((edge) => edge.confidence === "low");
+  if (lowConfidenceEdges.length > 0) {
+    const lowConfidenceNodes = new Set(lowConfidenceEdges.map((edge) => edge.from));
+    warnings.push(
+      `Found ${lowConfidenceEdges.length} low-confidence heuristic edge${lowConfidenceEdges.length === 1 ? "" : "s"} across ${lowConfidenceNodes.size} node${lowConfidenceNodes.size === 1 ? "" : "s"}. Review dashed connectors before deployment.`
+    );
+  }
+
   return {
     rootId,
     nodes,
@@ -762,18 +797,84 @@ function sanitizeNode(node) {
   };
 }
 
-function joinNodeFiles(node) {
+function joinNodeFiles(index, node) {
   return node.files
-    .map((filePath) => safeRead(filePath))
+    .map((filePath) => safeRead(index, filePath))
     .join("\n");
 }
 
-function safeRead(filePath) {
+function safeRead(index, filePath) {
   try {
     return fs.readFileSync(filePath, "utf8");
   } catch (error) {
+    pushWarning(
+      index,
+      `Could not read file: ${formatWarningPath(index, filePath)}${error && error.code ? ` (${error.code})` : ""}`
+    );
     return "";
   }
+}
+
+function pushWarning(index, message) {
+  if (!index || !message || index.warningKeys.has(message)) {
+    return;
+  }
+
+  index.warningKeys.add(message);
+  index.warnings.push(message);
+}
+
+function recordUnresolvedReference(index, node, category, rawName, source) {
+  if (!index || !node || !rawName) {
+    return;
+  }
+
+  const key = [node.id, category, source].join("|");
+  let entry = index.unresolvedReferences.get(key);
+  if (!entry) {
+    entry = {
+      nodeId: node.id,
+      nodeLabel: node.label || node.name || node.id,
+      category,
+      source,
+      names: new Set()
+    };
+    index.unresolvedReferences.set(key, entry);
+  }
+
+  entry.names.add(String(rawName));
+}
+
+function appendUnresolvedReferenceWarnings(index, warnings, visitedNodeIds) {
+  const entries = [...index.unresolvedReferences.values()].sort((left, right) => {
+    if (left.nodeLabel !== right.nodeLabel) {
+      return left.nodeLabel.localeCompare(right.nodeLabel);
+    }
+    if (left.category !== right.category) {
+      return left.category.localeCompare(right.category);
+    }
+    return left.source.localeCompare(right.source);
+  });
+
+  for (const entry of entries) {
+    if (!visitedNodeIds.has(entry.nodeId)) {
+      continue;
+    }
+
+    const names = [...entry.names].sort((left, right) => left.localeCompare(right));
+    const preview = names.slice(0, 3).join(", ");
+    const moreCount = Math.max(0, names.length - 3);
+    const suffix = moreCount > 0 ? `, +${moreCount} more` : "";
+    const referenceLabel = names.length === 1 ? "reference" : "references";
+
+    warnings.push(
+      `Unresolved ${entry.category} ${referenceLabel} from ${entry.nodeLabel} (${names.length}) via ${entry.source}: ${preview}${suffix}`
+    );
+  }
+}
+
+function looksLikeCustomSchemaToken(token) {
+  return /__(?:c|mdt|r)\b/.test(String(token || ""));
 }
 
 function stripCommentsAndStrings(text) {
@@ -800,6 +901,19 @@ function matchFirst(text, regex) {
 
 function toRelative(root, target) {
   return path.relative(root, target);
+}
+
+function formatWarningPath(index, filePath) {
+  if (!index?.workspaceRoot) {
+    return filePath;
+  }
+
+  const relative = toRelative(index.workspaceRoot, filePath);
+  if (!relative || relative.startsWith("..")) {
+    return filePath;
+  }
+
+  return relative;
 }
 
 function normalizePath(value) {

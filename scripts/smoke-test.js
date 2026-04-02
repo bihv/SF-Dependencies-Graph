@@ -59,6 +59,9 @@ async function main() {
   await verifyPackageXmlForCustomMetadataRecord();
 
   verifyCompactTree();
+  await verifyAuraAnalysis();
+  await verifyTriggerAnalysis();
+  await verifyFieldFormulaAnalysis();
   await verifyWarningAggregation();
   await verifyPackageApiVersionResolution();
 
@@ -102,6 +105,109 @@ function verifyCompactTree() {
     rightBranchShared.children.length === 0,
     "Reference leaf should not duplicate the shared subtree"
   );
+}
+
+async function verifyAuraAnalysis() {
+  const workspaceRoot = path.join(__dirname, "..", "test-fixtures", "simple");
+  const result = await runAnalysis(
+    workspaceRoot,
+    path.join("force-app", "main", "default", "aura", "orderAura")
+  );
+
+  assert(result.root.id === "aura:orderAura", "Root node should be orderAura Aura bundle");
+  assert(
+    result.graph.edges.some(
+      (edge) => edge.from === "aura:orderAura" && edge.to === "lwc:orderSummary"
+    ),
+    "Aura markup should resolve referenced LWC bundles"
+  );
+  assert(
+    result.graph.edges.some(
+      (edge) => edge.from === "aura:orderAura" && edge.to === "apexClass:AuraOrderController"
+    ),
+    "Aura controller attributes should resolve Apex controllers"
+  );
+  assert(
+    result.graph.edges.some(
+      (edge) => edge.from === "aura:orderAura" && edge.to === "customLabel:Order_Title"
+    ),
+    "Aura expressions should resolve custom labels"
+  );
+}
+
+async function verifyTriggerAnalysis() {
+  const workspaceRoot = path.join(__dirname, "..", "test-fixtures", "simple");
+  const result = await runAnalysis(
+    workspaceRoot,
+    path.join("force-app", "main", "default", "triggers", "InvoiceTrigger.trigger")
+  );
+
+  assert(result.root.id === "apexTrigger:InvoiceTrigger", "Root node should be InvoiceTrigger");
+  assert(
+    result.graph.edges.some(
+      (edge) => edge.from === "apexTrigger:InvoiceTrigger" && edge.to === "customObject:Invoice__c"
+    ),
+    "Trigger parser should resolve the trigger target object"
+  );
+  assert(
+    result.graph.edges.some(
+      (edge) => edge.from === "apexTrigger:InvoiceTrigger" && edge.to === "apexClass:OrderController"
+    ),
+    "Trigger parser should resolve referenced Apex classes"
+  );
+}
+
+async function verifyFieldFormulaAnalysis() {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sf-deps-graph-formula-"));
+  const workspaceRoot = path.join(tempRoot, "workspace");
+
+  try {
+    fs.cpSync(
+      path.join(__dirname, "..", "test-fixtures", "simple"),
+      workspaceRoot,
+      { recursive: true }
+    );
+
+    const fieldPath = path.join(
+      workspaceRoot,
+      "force-app",
+      "main",
+      "default",
+      "objects",
+      "Invoice__c",
+      "fields",
+      "Amount__c.field-meta.xml"
+    );
+
+    fs.writeFileSync(
+      fieldPath,
+      [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">',
+        "  <fullName>Amount__c</fullName>",
+        "  <formula>IF(App_Config__mdt.Name = &quot;Default&quot;, Amount__c, Amount__c)</formula>",
+        "  <type>Number</type>",
+        "</CustomField>"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await runAnalysis(
+      workspaceRoot,
+      path.join("force-app", "main", "default", "objects", "Invoice__c", "fields", "Amount__c.field-meta.xml")
+    );
+
+    assert(
+      result.graph.edges.some(
+        (edge) =>
+          edge.from === "customField:Invoice__c.Amount__c" &&
+          edge.to === "customMetadataType:App_Config__mdt"
+      ),
+      "Formula parser should resolve custom metadata types used by a formula"
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 }
 
 function verifyPackageXml(result) {

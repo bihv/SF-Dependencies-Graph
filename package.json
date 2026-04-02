@@ -8,7 +8,9 @@
     "vscode": "^1.85.0"
   },
   "scripts": {
-    "smoke": "node scripts/smoke-test.js"
+    "test:modules": "node scripts/module-tests.js",
+    "smoke": "node scripts/smoke-test.js",
+    "test": "npm run test:modules && npm run smoke"
   },
   "categories": [
     "Other"

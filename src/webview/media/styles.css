@@ -60,6 +60,16 @@ body {
   overflow: hidden;
 }
 
+.canvas-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .topbar {
   width: 100%;
   align-self: stretch;
@@ -81,6 +91,40 @@ body {
   min-height: 0;
   overflow: auto;
   padding: 20px;
+}
+
+.minimap {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  z-index: 8;
+  width: 228px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--panel-strong) 94%, transparent);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow);
+}
+
+.minimap[hidden] {
+  display: none;
+}
+
+.minimap-title {
+  margin-bottom: 8px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+#minimapSvg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-width: 0;
+  cursor: pointer;
 }
 
 .section {
@@ -248,6 +292,18 @@ button:disabled {
   color: var(--muted);
 }
 
+.warnings .list {
+  max-height: min(34vh, 320px);
+  overflow: auto;
+  padding-right: 8px;
+  padding-bottom: 8px;
+  scrollbar-gutter: stable;
+}
+
+.warnings .list li {
+  min-width: max-content;
+}
+
 .list li + li {
   margin-top: 6px;
 }
@@ -304,9 +360,40 @@ button:disabled {
   color: var(--muted);
 }
 
-svg {
+#mindmap {
   display: block;
   min-width: 100%;
+}
+
+.minimap-frame {
+  fill: color-mix(in srgb, var(--bg) 58%, transparent);
+  stroke: color-mix(in srgb, var(--text) 12%, transparent);
+  stroke-width: 1;
+}
+
+.minimap-link {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent) 36%, var(--text) 22%);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.68;
+}
+
+.minimap-node {
+  opacity: 0.88;
+}
+
+.minimap-node.is-selected {
+  stroke: rgba(255, 255, 255, 0.96);
+  stroke-width: 2;
+}
+
+.minimap-viewport {
+  fill: color-mix(in srgb, var(--accent) 18%, transparent);
+  stroke: color-mix(in srgb, var(--accent) 82%, white 8%);
+  stroke-width: 2;
+  pointer-events: none;
 }
 
 .node-card {
@@ -464,7 +551,17 @@ svg {
     overflow: visible;
   }
 
+  .canvas-stage {
+    min-height: 60vh;
+  }
+
   .canvas {
     min-height: 60vh;
+  }
+
+  .minimap {
+    width: 188px;
+    right: 14px;
+    bottom: 14px;
   }
 }

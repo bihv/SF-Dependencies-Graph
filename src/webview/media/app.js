@@ -25,7 +25,12 @@ const HORIZONTAL_GAP = 90;
 const VERTICAL_GAP = 20;
 const PADDING_X = 40;
 const PADDING_Y = 34;
+const MINIMAP_WIDTH = 208;
+const MINIMAP_HEIGHT = 132;
+const MINIMAP_INSET = 8;
 let textMeasureContext = null;
+let minimapLayout = null;
+let minimapViewportFrame = 0;
 
 const savedState = vscode.getState() || {};
 let tree = null;
@@ -39,6 +44,8 @@ const elements = {
   canvas: document.getElementById("canvas"),
   svg: document.getElementById("mindmap"),
   empty: document.getElementById("emptyState"),
+  minimap: document.getElementById("minimap"),
+  minimapSvg: document.getElementById("minimapSvg"),
   rootTitle: document.getElementById("rootTitle"),
   rootType: document.getElementById("rootType"),
   nodeCount: document.getElementById("nodeCount"),
@@ -59,6 +66,10 @@ const elements = {
   showAllTypesBtn: document.getElementById("showAllTypesBtn"),
   showRootOnlyBtn: document.getElementById("showRootOnlyBtn")
 };
+
+elements.canvas.addEventListener("scroll", scheduleMinimapViewportSync, { passive: true });
+window.addEventListener("resize", scheduleMinimapViewportSync);
+elements.minimapSvg.addEventListener("click", handleMinimapPointer);
 
 document.getElementById("expandAllBtn").addEventListener("click", () => {
   state.collapsed.clear();
@@ -170,6 +181,7 @@ function render() {
   if (!analysis || !visibleTree) {
     elements.svg.innerHTML = "";
     elements.empty.style.display = analysis ? "block" : "none";
+    hideMinimap();
     return;
   }
 
@@ -189,9 +201,11 @@ function render() {
   elements.svg.setAttribute("width", String(width));
   elements.svg.setAttribute("height", String(height));
   elements.svg.innerHTML = renderSvg(links, nodes);
+  renderMinimap(links, nodes, width, height);
 
   bindSvgEvents();
   persistState();
+  scheduleMinimapViewportSync();
 }
 
 function bindSvgEvents() {
@@ -560,6 +574,136 @@ function renderSvg(links, nodes) {
   const linkMarkup = links.map(renderLink).join("");
   const nodeMarkup = nodes.map(renderNode).join("");
   return "<g>" + linkMarkup + nodeMarkup + "</g>";
+}
+
+function renderMinimap(links, nodes, width, height) {
+  const scale = Math.min(
+    (MINIMAP_WIDTH - MINIMAP_INSET * 2) / Math.max(width, 1),
+    (MINIMAP_HEIGHT - MINIMAP_INSET * 2) / Math.max(height, 1)
+  );
+  const scaledWidth = width * scale;
+  const scaledHeight = height * scale;
+  const offsetX = (MINIMAP_WIDTH - scaledWidth) / 2;
+  const offsetY = (MINIMAP_HEIGHT - scaledHeight) / 2;
+
+  minimapLayout = {
+    width,
+    height,
+    scale,
+    offsetX,
+    offsetY
+  };
+
+  const linkMarkup = links.map((link) => renderMinimapLink(link, scale, offsetX, offsetY)).join("");
+  const nodeMarkup = nodes.map((node) => renderMinimapNode(node, scale, offsetX, offsetY)).join("");
+
+  elements.minimapSvg.setAttribute("viewBox", "0 0 " + MINIMAP_WIDTH + " " + MINIMAP_HEIGHT);
+  elements.minimapSvg.innerHTML =
+    '<rect class="minimap-frame" x="0.5" y="0.5" rx="12" ry="12" width="' + (MINIMAP_WIDTH - 1) + '" height="' + (MINIMAP_HEIGHT - 1) + '"></rect>' +
+    linkMarkup +
+    nodeMarkup +
+    '<rect id="minimapViewport" class="minimap-viewport" x="0" y="0" rx="8" ry="8" width="0" height="0"></rect>';
+  elements.minimap.hidden = false;
+}
+
+function renderMinimapLink(link, scale, offsetX, offsetY) {
+  const startX = offsetX + (link.from.x + NODE_WIDTH) * scale;
+  const startY = offsetY + (link.from.y + NODE_HEIGHT / 2) * scale;
+  const endX = offsetX + link.to.x * scale;
+  const endY = offsetY + (link.to.y + NODE_HEIGHT / 2) * scale;
+  const controlOffset = Math.max(12, (endX - startX) * 0.45);
+  const path = [
+    "M", startX, startY,
+    "C", startX + controlOffset, startY,
+    endX - controlOffset, endY,
+    endX, endY
+  ].join(" ");
+
+  return '<path class="minimap-link" d="' + path + '"></path>';
+}
+
+function renderMinimapNode(node, scale, offsetX, offsetY) {
+  const color = KIND_COLORS[node.kind] || "#666666";
+  const selectedClass = node.key === state.selectedKey ? " is-selected" : "";
+  return (
+    '<rect class="minimap-node' + selectedClass + '" x="' + (offsetX + node.x * scale) + '" y="' + (offsetY + node.y * scale) + '" rx="' + Math.max(3, 16 * scale) + '" ry="' + Math.max(3, 16 * scale) + '" width="' + Math.max(6, NODE_WIDTH * scale) + '" height="' + Math.max(6, NODE_HEIGHT * scale) + '" fill="' + color + '"></rect>'
+  );
+}
+
+function hideMinimap() {
+  minimapLayout = null;
+  elements.minimapSvg.innerHTML = "";
+  elements.minimap.hidden = true;
+}
+
+function scheduleMinimapViewportSync() {
+  if (minimapViewportFrame) {
+    return;
+  }
+
+  minimapViewportFrame = requestAnimationFrame(() => {
+    minimapViewportFrame = 0;
+    syncMinimapViewport();
+  });
+}
+
+function syncMinimapViewport() {
+  if (!minimapLayout) {
+    return;
+  }
+
+  const viewport = elements.minimapSvg.querySelector("#minimapViewport");
+  if (!viewport) {
+    return;
+  }
+
+  const svgRect = elements.svg.getBoundingClientRect();
+  const canvasRect = elements.canvas.getBoundingClientRect();
+  const visibleLeft = Math.max(canvasRect.left, svgRect.left);
+  const visibleTop = Math.max(canvasRect.top, svgRect.top);
+  const visibleRight = Math.min(canvasRect.right, svgRect.right);
+  const visibleBottom = Math.min(canvasRect.bottom, svgRect.bottom);
+
+  const visibleWidth = Math.max(0, visibleRight - visibleLeft);
+  const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+  const intrinsicX = visibleWidth > 0 ? (visibleLeft - svgRect.left) * (minimapLayout.width / Math.max(svgRect.width, 1)) : 0;
+  const intrinsicY = visibleHeight > 0 ? (visibleTop - svgRect.top) * (minimapLayout.height / Math.max(svgRect.height, 1)) : 0;
+  const intrinsicWidth = visibleWidth * (minimapLayout.width / Math.max(svgRect.width, 1));
+  const intrinsicHeight = visibleHeight * (minimapLayout.height / Math.max(svgRect.height, 1));
+
+  viewport.setAttribute("x", String(minimapLayout.offsetX + intrinsicX * minimapLayout.scale));
+  viewport.setAttribute("y", String(minimapLayout.offsetY + intrinsicY * minimapLayout.scale));
+  viewport.setAttribute("width", String(Math.max(12, intrinsicWidth * minimapLayout.scale)));
+  viewport.setAttribute("height", String(Math.max(12, intrinsicHeight * minimapLayout.scale)));
+}
+
+function handleMinimapPointer(event) {
+  if (!minimapLayout) {
+    return;
+  }
+
+  const rect = elements.minimapSvg.getBoundingClientRect();
+  const ratioX = MINIMAP_WIDTH / Math.max(rect.width, 1);
+  const ratioY = MINIMAP_HEIGHT / Math.max(rect.height, 1);
+  const localX = (event.clientX - rect.left) * ratioX;
+  const localY = (event.clientY - rect.top) * ratioY;
+  const intrinsicX = (localX - minimapLayout.offsetX) / minimapLayout.scale;
+  const intrinsicY = (localY - minimapLayout.offsetY) / minimapLayout.scale;
+
+  if (intrinsicX < 0 || intrinsicY < 0 || intrinsicX > minimapLayout.width || intrinsicY > minimapLayout.height) {
+    return;
+  }
+
+  const displayedX = intrinsicX * (elements.svg.clientWidth / Math.max(minimapLayout.width, 1));
+  const displayedY = intrinsicY * (elements.svg.clientHeight / Math.max(minimapLayout.height, 1));
+  const targetLeft = elements.svg.offsetLeft + displayedX - elements.canvas.clientWidth / 2;
+  const targetTop = elements.svg.offsetTop + displayedY - elements.canvas.clientHeight / 2;
+
+  elements.canvas.scrollTo({
+    left: Math.max(0, targetLeft),
+    top: Math.max(0, targetTop),
+    behavior: "smooth"
+  });
 }
 
 function renderLink(link) {

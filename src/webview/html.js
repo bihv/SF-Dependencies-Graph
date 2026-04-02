@@ -104,9 +104,15 @@ function getWebviewHtml(webview, extensionUri) {
           <button id="focusRootBtn">Focus root</button>
         </div>
       </div>
-      <div class="canvas" id="canvas">
-        <svg id="mindmap" role="img" aria-label="Salesforce dependency mindmap"></svg>
-        <div class="canvas-empty" id="emptyState">No dependency nodes were returned for this selection.</div>
+      <div class="canvas-stage">
+        <div class="canvas" id="canvas">
+          <svg id="mindmap" role="img" aria-label="Salesforce dependency mindmap"></svg>
+          <div class="canvas-empty" id="emptyState">No dependency nodes were returned for this selection.</div>
+        </div>
+        <aside class="minimap" id="minimap" aria-label="Viewport minimap" hidden>
+          <div class="minimap-title">Viewport</div>
+          <svg id="minimapSvg" role="img" aria-label="Dependency graph overview"></svg>
+        </aside>
       </div>
     </main>
   </div>
